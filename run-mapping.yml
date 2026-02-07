@@ -1,0 +1,114 @@
+name: Run SBS Mapping (Cloud Execution)
+
+on:
+  workflow_dispatch:
+    inputs:
+      threshold:
+        description: 'Similarity threshold (0.0 to 1.0)'
+        required: false
+        default: '0.60'
+      v2v3_file:
+        description: 'Path to V2-V3 mapping file in repository'
+        required: true
+        default: 'data/input/SBS_V2_to_V3_Map.xlsx'
+      pricelist_file:
+        description: 'Path to price list file in repository'
+        required: true
+        default: 'data/input/pricelist.xlsx'
+      code_column:
+        description: 'Price list code column name'
+        required: false
+        default: 'Code'
+      desc_column:
+        description: 'Price list description column name'
+        required: false
+        default: 'Description'
+      price_column:
+        description: 'Price list price column name'
+        required: false
+        default: 'Price'
+
+jobs:
+  run-mapping:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Verify input files exist
+      run: |
+        if [ ! -f "${{ github.event.inputs.v2v3_file }}" ]; then
+          echo "Error: V2-V3 mapping file not found: ${{ github.event.inputs.v2v3_file }}"
+          exit 1
+        fi
+        if [ ! -f "${{ github.event.inputs.pricelist_file }}" ]; then
+          echo "Error: Price list file not found: ${{ github.event.inputs.pricelist_file }}"
+          exit 1
+        fi
+        echo "✓ All input files found"
+    
+    - name: Run SBS Mapping
+      run: |
+        python sbs_mapping_cli.py \
+          --v2v3-file "${{ github.event.inputs.v2v3_file }}" \
+          --pricelist "${{ github.event.inputs.pricelist_file }}" \
+          --code-col "${{ github.event.inputs.code_column }}" \
+          --desc-col "${{ github.event.inputs.desc_column }}" \
+          --price-col "${{ github.event.inputs.price_column }}" \
+          --threshold ${{ github.event.inputs.threshold }} \
+          --output-dir data/output \
+          --output-prefix "github-run-$(date +%Y%m%d-%H%M%S)"
+    
+    - name: Upload Results
+      uses: actions/upload-artifact@v3
+      with:
+        name: mapping-results-${{ github.run_number }}
+        path: |
+          data/output/*.xlsx
+          data/output/*.json
+          data/output/*.png
+        retention-days: 30
+    
+    - name: Generate Summary
+      run: |
+        echo "## 📊 Mapping Results Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Run ID**: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Date**: $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "**Threshold**: ${{ github.event.inputs.threshold }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Input Files" >> $GITHUB_STEP_SUMMARY
+        echo "- V2-V3 Mapping: \`${{ github.event.inputs.v2v3_file }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Price List: \`${{ github.event.inputs.pricelist_file }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Output Files" >> $GITHUB_STEP_SUMMARY
+        echo "Results have been uploaded as artifacts and are available for download." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ **Mapping completed successfully!**" >> $GITHUB_STEP_SUMMARY
+        
+        # If report.json exists, extract and display statistics
+        if [ -f data/output/*report.json ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Statistics" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat data/output/*report.json >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        fi
+    
+    - name: Notify on failure
+      if: failure()
+      run: |
+        echo "## ❌ Mapping Failed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Please check the workflow logs for details." >> $GITHUB_STEP_SUMMARY
